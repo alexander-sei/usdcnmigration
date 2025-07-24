@@ -29,7 +29,6 @@ export interface IbcTransferArgs {
 
 /* ---------------------------- constants --------------------------- */
 const IBC_PRECOMPILE_ADDRESS = '0x0000000000000000000000000000000000001009';
-const TOKEN_ADDRESS = '0x3894085Ef7Ff0f0aeDf52E2A2704928d1Ec074F1';
 // "erc20/<tokenAddress>" is the denom used by the precompile for pointer tokens
 const DEFAULT_DENOM = `ibc/CA6FBFAF399474A06263E10D0CE5AEBBE15189D6D4B2DD9ADE61007E68EB9DB0`;
 const DEFAULT_CHANNEL = 'channel-45'; // pacific-1 → noble-1
@@ -45,7 +44,6 @@ export async function ibcTransfer({
   signer,
   toAddress,
   amount,
-  memo = '',
   channel = DEFAULT_CHANNEL,
   denom = DEFAULT_DENOM
 }: IbcTransferArgs): Promise<{ txHash: string }> {
@@ -68,7 +66,7 @@ export async function ibcTransfer({
     channel,
     denom,
     amountMicro,
-    "tesdstdrtetr"
+    ""
   );
   const receipt = await tx.wait();
   return { txHash: receipt.transactionHash };

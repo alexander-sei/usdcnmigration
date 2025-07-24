@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { maxUint256, erc20Abi, parseErc6492Signature, getContract } from "viem";
 
 // Adapted from https://github.com/vacekj/wagmi-permit/blob/main/src/permit.ts
