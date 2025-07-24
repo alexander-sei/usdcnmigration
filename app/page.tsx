@@ -1,19 +1,25 @@
-'use client';
+"use client";
 
-import React, { useState, useEffect } from 'react';
-import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { useAccount, useSignMessage } from 'wagmi';
-import { ethers } from 'ethers';
-import type { Hex } from 'viem';
-import { Buffer } from 'buffer';
-import { DirectSecp256k1Wallet } from '@cosmjs/proto-signing';
-import { ibcTransfer } from '../lib/ibcTransfer';
-import { StargateClient } from '@cosmjs/stargate';
-import { createPublicClient, http, erc20Abi, encodeFunctionData, parseAbi, type Address } from "viem"
-import { BUNDLER_RPC_URL, TOKEN_MESSENGER_V2 } from "../lib/constants"
-import { polygon } from "viem/chains"
-import { privateKeyToAccount, } from "viem/accounts"
-import { getContract,encodePacked } from "viem";
+import React, { useState, useEffect } from "react";
+import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { useAccount, useSignMessage } from "wagmi";
+import { ethers } from "ethers";
+import type { Hex } from "viem";
+import { Buffer } from "buffer";
+import { DirectSecp256k1Wallet } from "@cosmjs/proto-signing";
+import { ibcTransfer } from "../lib/ibcTransfer";
+import { StargateClient } from "@cosmjs/stargate";
+import {
+  createPublicClient,
+  http,
+  erc20Abi,
+  parseAbi,
+  type Address,
+} from "viem";
+import { TOKEN_MESSENGER_V2 } from "../lib/constants";
+import { polygon } from "viem/chains";
+import { privateKeyToAccount } from "viem/accounts";
+import { getContract, encodePacked } from "viem";
 import { signPermit } from "../lib/permit";
 import { hexToBigInt } from "viem";
 
@@ -24,14 +30,13 @@ import {
 
 // Removed ERC-20 paymaster helpers – replaced by direct Pimlico sponsorship
 
-
 export default function Home() {
   // Grab the connected EVM address so we can auto-fill the CCTP mint recipient
   const { isConnected, address } = useAccount();
   const { signMessageAsync, isPending } = useSignMessage();
-  
+
   // Debug account connection
-  console.log('Account state:', { isConnected, address });
+  console.log("Account state:", { isConnected, address });
 
   const [signature, setSignature] = useState<string | undefined>();
   const [privateKey, setPrivateKey] = useState<string | undefined>();
@@ -40,29 +45,30 @@ export default function Home() {
   const [evmAddress, setEvmAddress] = useState<string | undefined>();
   const [cctpHash, setCctpHash] = useState<string | undefined>();
   // Separate amounts for the two transfer flows
-  const [ibcAmount, setIbcAmount] = useState<string>('');
-  const [cctpAmount, setCctpAmount] = useState<string>('');
+  const [ibcAmount, setIbcAmount] = useState<string>("");
+  const [cctpAmount, setCctpAmount] = useState<string>("");
   const [nobleBalance, setNobleBalance] = useState<string | undefined>();
   const [showConfirmation, setShowConfirmation] = useState<boolean>(false);
   const [polygonBalance, setPolygonBalance] = useState<string | undefined>();
   // --- New: Sei EVM balances ---
   const [seiNobleBalance, setSeiNobleBalance] = useState<string | undefined>();
-  const [seiNativeBalance, setSeiNativeBalance] = useState<string | undefined>();
+  const [seiNativeBalance, setSeiNativeBalance] = useState<
+    string | undefined
+  >();
   // --- Step 5 (CCTP v2 Polygon → Sei) state ---
-  const [seiAmount, setSeiAmount] = useState<string>('');
+  const [seiAmount, setSeiAmount] = useState<string>("");
   const [seiTxHash, setSeiTxHash] = useState<string | undefined>();
 
-  const ENTRYPOINT = "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108"
-const USDC: Address = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359" as Address // Native USDC on Polygon
-const PAYMASTER: Address = "0x0578cFB241215b77442a541325d6A4E6dFE700Ec" as Address
-// Ensure strongly-typed address for TokenMessengerV2
-const TOKEN_MESSENGER: Address = TOKEN_MESSENGER_V2 as Address;
-const BUNDLER_RPC = BUNDLER_RPC_URL
+  const USDC: Address = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359" as Address; // Native USDC on Polygon
+  const PAYMASTER: Address =
+    "0x0578cFB241215b77442a541325d6A4E6dFE700Ec" as Address;
+  // Ensure strongly-typed address for TokenMessengerV2
+  const TOKEN_MESSENGER: Address = TOKEN_MESSENGER_V2 as Address;
 
   const deriveWallet = async () => {
     try {
       const sig = await signMessageAsync({
-        message: 'Signing this message to create a temporary Noble wallet',
+        message: "Signing this message to create a temporary Noble wallet",
       });
       setSignature(sig);
       // Use keccak256(signature) as entropy for a 32-byte private key (not cryptographically endorsed for production!)
@@ -70,34 +76,36 @@ const BUNDLER_RPC = BUNDLER_RPC_URL
       setPrivateKey(key);
 
       // Use the Cosmos SDK helper to derive the Noble address from the private key
-      const pkBytes = Uint8Array.from(Buffer.from(key.slice(2), 'hex'));
-      const wallet = await DirectSecp256k1Wallet.fromKey(pkBytes, 'noble');
+      const pkBytes = Uint8Array.from(Buffer.from(key.slice(2), "hex"));
+      const wallet = await DirectSecp256k1Wallet.fromKey(pkBytes, "noble");
       const [account] = await wallet.getAccounts();
       setNobleAddress(account.address);
 
       // Derive the corresponding ERC-4337 smart account on Polygon
       try {
-        const client = createPublicClient({ chain: polygon, transport: http() });
+        const client = createPublicClient({
+          chain: polygon,
+          transport: http(),
+        });
         const owner = privateKeyToAccount(key as `0x${string}`);
         const account = await toSimple7702SmartAccount({ client, owner });
-        
-        const addr = account.address
+
+        const addr = account.address;
         setEvmAddress(addr);
       } catch (err) {
-        console.error('Failed to derive 0x address:', err);
+        console.error("Failed to derive 0x address:", err);
       }
     } catch (err) {
       console.error(err);
-      alert('Signature rejected or failed.');
+      alert("Signature rejected or failed.");
     }
   };
-
 
   const sendIBC = async () => {
     if (!nobleAddress || !ibcAmount) return;
     try {
       // Create signer from wallet provider (assumes user is on Sei network)
-      if (!(window as any).ethereum) throw new Error('Wallet not detected');
+      if (!(window as any).ethereum) throw new Error("Wallet not detected");
       const provider = new ethers.BrowserProvider((window as any).ethereum);
       const signer = await provider.getSigner();
 
@@ -110,7 +118,7 @@ const BUNDLER_RPC = BUNDLER_RPC_URL
       setTxHash(txHash);
     } catch (err) {
       console.error(err);
-      alert('IBC transfer failed — see console for details.');
+      alert("IBC transfer failed — see console for details.");
     }
   };
 
@@ -119,16 +127,16 @@ const BUNDLER_RPC = BUNDLER_RPC_URL
     if (!privateKey || !evmAddress || !cctpAmount) return;
     try {
       // Dynamically load our local helper that handles the Noble CCTP message
-      const { depositForBurn } = await import('../lib/depositForBurn');
+      const { depositForBurn } = await import("../lib/depositForBurn");
 
       // Convert the user-provided amount (whole USDC units) to micro units (6 decimals)
       const microAmount = ethers.parseUnits(cctpAmount, 6).toString();
 
       const result = await depositForBurn({
-        rpcEndpoint: 'https://noble-rpc.polkachu.com/', // Noble public  RPC
+        rpcEndpoint: "https://noble-rpc.polkachu.com/", // Noble public  RPC
         senderPrivateKey: privateKey,
         amount: microAmount,
-        destinationDomain: 7, // Polygon 
+        destinationDomain: 7, // Polygon
         destinationAddress: evmAddress,
       });
 
@@ -136,7 +144,7 @@ const BUNDLER_RPC = BUNDLER_RPC_URL
       setShowConfirmation(true);
     } catch (err) {
       console.error(err);
-      alert('CCTP transaction failed — see console for details.');
+      alert("CCTP transaction failed — see console for details.");
     }
   };
 
@@ -147,112 +155,132 @@ const BUNDLER_RPC = BUNDLER_RPC_URL
     const client = createPublicClient({ chain: polygon, transport: http() });
     const owner = privateKeyToAccount(privateKey as `0x${string}`);
     const account = await toSimple7702SmartAccount({ client, owner });
-    const usdc = getContract({ client, address: USDC as Address, abi: erc20Abi });
-const usdcBalance = await usdc.read.balanceOf([account.address]);
+    const usdc = getContract({
+      client,
+      address: USDC as Address,
+      abi: erc20Abi,
+    });
 
     // --- CCTP v2 burn parameters ---
     if (!seiAmount || !address) {
-      alert('Specify amount and ensure Sei wallet connected');
+      alert("Specify amount and ensure Sei wallet connected");
       return;
     }
     const burnAmount = ethers.parseUnits(seiAmount, 6);
     const SEI_DOMAIN_ID = 16;
-    const mintRecipient = ethers.zeroPadValue(address as unknown as Address, 32);
-    const ZERO_BYTES32 = '0x0000000000000000000000000000000000000000000000000000000000000000' as Hex;
+    const mintRecipient = ethers.zeroPadValue(
+      address as unknown as Address,
+      32
+    );
+    const ZERO_BYTES32 =
+      "0x0000000000000000000000000000000000000000000000000000000000000000" as Hex;
 
     // Viem requires a parsed ABI (objects with name/type) – not raw strings
     const tokenMessengerAbi = parseAbi([
-      'function depositForBurn(uint256 amount, uint32 destinationDomain, bytes32 mintRecipient, address burnToken, bytes32 destinationCaller, uint256 maxFee, uint32 minFinalityThreshold)'
+      "function depositForBurn(uint256 amount, uint32 destinationDomain, bytes32 mintRecipient, address burnToken, bytes32 destinationCaller, uint256 maxFee, uint32 minFinalityThreshold)",
     ]);
 
-const paymaster = {
-  async getPaymasterData(parameters: any) {
-    const permitAmount = 500000n;
-    const permitSignature = await signPermit({
-      tokenAddress: USDC,
+    const paymaster = {
+      async getPaymasterData(parameters: any) {
+        const permitAmount = 500000n;
+        const permitSignature = await signPermit({
+          tokenAddress: USDC,
+          account,
+          client,
+          spenderAddress: PAYMASTER,
+          permitAmount: permitAmount,
+        });
+
+        const paymasterData = encodePacked(
+          ["uint8", "address", "uint256", "bytes"],
+          [0, USDC, permitAmount, permitSignature]
+        );
+
+        return {
+          paymaster: PAYMASTER,
+          paymasterData,
+          paymasterVerificationGasLimit: 200000n,
+          paymasterPostOpGasLimit: 15000n,
+          isFinal: true,
+        };
+      },
+    };
+
+    const bundlerClient = createBundlerClient({
       account,
       client,
-      spenderAddress: PAYMASTER,
-      permitAmount: permitAmount,
+      paymaster: paymaster as any,
+      userOperation: {
+        estimateFeesPerGas: async ({
+          account,
+          bundlerClient,
+          userOperation,
+        }) => {
+          const { standard: fees } = (await bundlerClient.request({
+            method: "pimlico_getUserOperationGasPrice" as any,
+          })) as any;
+          const maxFeePerGas = hexToBigInt(fees.maxFeePerGas);
+          const maxPriorityFeePerGas = hexToBigInt(fees.maxPriorityFeePerGas);
+          return { maxFeePerGas, maxPriorityFeePerGas };
+        },
+      },
+      transport: http(`https://public.pimlico.io/v2/${client.chain.id}/rpc`),
     });
 
-    const paymasterData = encodePacked(
-      ["uint8", "address", "uint256", "bytes"],
-      [0, USDC, permitAmount, permitSignature],
-    );
+    // Sign authorization for 7702 account
+    const authorization = await owner.signAuthorization({
+      chainId: 137,
+      nonce: await client.getTransactionCount({ address: owner.address }),
+      contractAddress: account.authorization.address,
+    });
 
-    return {
-      paymaster: PAYMASTER,
-      paymasterData,
-      paymasterVerificationGasLimit: 200000n,
-      paymasterPostOpGasLimit: 15000n,
-      isFinal: true,
-    };
-  },
-};
-
-const bundlerClient = createBundlerClient({
-  account,
-  client,
-  paymaster: paymaster as any,
-  userOperation: {
-    estimateFeesPerGas: async ({ account, bundlerClient, userOperation }) => {
-      const { standard: fees } = (await bundlerClient.request({
-        method: "pimlico_getUserOperationGasPrice" as any,
-      })) as any;
-      const maxFeePerGas = hexToBigInt(fees.maxFeePerGas);
-      const maxPriorityFeePerGas = hexToBigInt(fees.maxPriorityFeePerGas);
-      return { maxFeePerGas, maxPriorityFeePerGas };
-    },
-  },
-  transport: http(`https://public.pimlico.io/v2/${client.chain.id}/rpc`),
-});
-
-// Sign authorization for 7702 account
-const authorization = await owner.signAuthorization({
-  chainId: 137,
-  nonce: await client.getTransactionCount({ address: owner.address }),
-  contractAddress: account.authorization.address,
-});
-
-const hash = await bundlerClient.sendUserOperation({
-  account,
-  calls: [
-    // 1) Approve the Polygon TokenMessengerV2 to spend native USDC
-    {
-      to: usdc.address,
-      abi: usdc.abi,
-      functionName: "approve",
-      args: [TOKEN_MESSENGER, burnAmount],
-    },
-    // 2) Burn USDC and create the CCTP v2 message to mint on Sei
-   {
-      to: TOKEN_MESSENGER,
-      abi: tokenMessengerAbi,
-      functionName: "depositForBurn",
-      args: [burnAmount, SEI_DOMAIN_ID, mintRecipient as `0x${string}`, USDC, ZERO_BYTES32, 10000n, 1],
-    },
-  ],
-  authorization: authorization,
-});
-console.log("UserOperation hash", hash);
-
-
+    const hash = await bundlerClient.sendUserOperation({
+      account,
+      calls: [
+        // 1) Approve the Polygon TokenMessengerV2 to spend native USDC
+        {
+          to: usdc.address,
+          abi: usdc.abi,
+          functionName: "approve",
+          args: [TOKEN_MESSENGER, burnAmount],
+        },
+        // 2) Burn USDC and create the CCTP v2 message to mint on Sei
+        {
+          to: TOKEN_MESSENGER,
+          abi: tokenMessengerAbi,
+          functionName: "depositForBurn",
+          args: [
+            burnAmount,
+            SEI_DOMAIN_ID,
+            mintRecipient as `0x${string}`,
+            USDC,
+            ZERO_BYTES32,
+            burnAmount / 500n,
+            1,
+          ],
+        },
+      ],
+      authorization: authorization,
+    });
+    console.log("UserOperation hash", hash);
   }
-
-  
 
   useEffect(() => {
     if (!nobleAddress) return;
 
     const fetchBalance = async () => {
       try {
-        const client = await StargateClient.connect('https://noble-rpc.polkachu.com/');
-        const { amount: rawAmount } = await client.getBalance(nobleAddress, 'uusdc');
-        const formatted = ethers.formatUnits(rawAmount || '0', 6);
+        const client = await StargateClient.connect(
+          "https://noble-rpc.polkachu.com/"
+        );
+        const { amount: rawAmount } = await client.getBalance(
+          nobleAddress,
+          "uusdc"
+        );
+        const formatted = ethers.formatUnits(rawAmount || "0", 6);
         setNobleBalance(formatted);
       } catch (err) {
-        console.error('Failed to fetch Noble balance:', err);
+        console.error("Failed to fetch Noble balance:", err);
       }
     };
 
@@ -265,13 +293,12 @@ console.log("UserOperation hash", hash);
     return () => clearInterval(intervalId);
   }, [nobleAddress, txHash, cctpHash]);
 
-
   // Fetch Polygon native USDC balance for the derived smart-account address
   useEffect(() => {
     if (!evmAddress) return;
 
-    const provider = new ethers.JsonRpcProvider('https://polygon.drpc.org');
-    const usdcAddress = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359'; // Native USDC on Polygon
+    const provider = new ethers.JsonRpcProvider("https://polygon.drpc.org");
+    const usdcAddress = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"; // Native USDC on Polygon
     const usdcContract = new ethers.Contract(usdcAddress, erc20Abi, provider);
 
     const fetchBalance = async () => {
@@ -283,7 +310,7 @@ console.log("UserOperation hash", hash);
         const formatted = ethers.formatUnits(rawBalance, decimals);
         setPolygonBalance(formatted);
       } catch (err) {
-        console.error('Failed to fetch Polygon USDC balance:', err);
+        console.error("Failed to fetch Polygon USDC balance:", err);
       }
     };
 
@@ -297,28 +324,36 @@ console.log("UserOperation hash", hash);
   useEffect(() => {
     if (!address) return;
 
-    const provider = new ethers.JsonRpcProvider('https://evm-rpc.sei-apis.com');
+    const provider = new ethers.JsonRpcProvider("https://evm-rpc.sei-apis.com");
     // Addresses from Sei docs (pacific-1 mainnet)
-    const NOBLE_USDC_ADDRESS = '0x3894085Ef7Ff0f0aeDf52E2A2704928d1Ec074F1';
-    const NATIVE_USDC_ADDRESS = '0xe15fC38F6D8c56aF07bbCBe3BAf5708A2Bf42392';
+    const NOBLE_USDC_ADDRESS = "0x3894085Ef7Ff0f0aeDf52E2A2704928d1Ec074F1";
+    const NATIVE_USDC_ADDRESS = "0xe15fC38F6D8c56aF07bbCBe3BAf5708A2Bf42392";
 
-
-    const nobleUsdcContract = new ethers.Contract(NOBLE_USDC_ADDRESS, erc20Abi, provider);
-    const nativeUsdcContract = new ethers.Contract(NATIVE_USDC_ADDRESS, erc20Abi, provider);
+    const nobleUsdcContract = new ethers.Contract(
+      NOBLE_USDC_ADDRESS,
+      erc20Abi,
+      provider
+    );
+    const nativeUsdcContract = new ethers.Contract(
+      NATIVE_USDC_ADDRESS,
+      erc20Abi,
+      provider
+    );
 
     const fetchBalances = async () => {
       try {
-        const [nobleRaw, nobleDecimals, nativeRaw, nativeDecimals] = await Promise.all([
-          nobleUsdcContract.balanceOf(address),
-          nobleUsdcContract.decimals(),
-          nativeUsdcContract.balanceOf(address),
-          nativeUsdcContract.decimals(),
-        ]);
+        const [nobleRaw, nobleDecimals, nativeRaw, nativeDecimals] =
+          await Promise.all([
+            nobleUsdcContract.balanceOf(address),
+            nobleUsdcContract.decimals(),
+            nativeUsdcContract.balanceOf(address),
+            nativeUsdcContract.decimals(),
+          ]);
 
         setSeiNobleBalance(ethers.formatUnits(nobleRaw, nobleDecimals));
         setSeiNativeBalance(ethers.formatUnits(nativeRaw, nativeDecimals));
       } catch (err) {
-        console.error('Failed to fetch Sei USDC balances:', err);
+        console.error("Failed to fetch Sei USDC balances:", err);
       }
     };
 
@@ -337,25 +372,31 @@ console.log("UserOperation hash", hash);
       {isConnected && !signature && (
         <>
           <p className="text-lg max-w-xl mt-4">
-            After connecting, we need a short signature to deterministically derive a temporary
-            Noble wallet. No funds move yet — it simply lets us prove ownership on a Cosmos chain.
+            After connecting, we need a short signature to deterministically
+            derive a temporary Noble wallet. No funds move yet — it simply lets
+            us prove ownership on a Cosmos chain.
           </p>
           <button
             onClick={deriveWallet}
             disabled={isPending}
             className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg disabled:opacity-60"
           >
-            {isPending ? 'Waiting for wallet…' : 'Sign & generate Noble wallet'}
+            {isPending ? "Waiting for wallet…" : "Sign & generate Noble wallet"}
           </button>
         </>
       )}
       {/* Display private key */}
       {privateKey && (
         <div className="space-y-3 max-w-xl break-all">
-          <p className="font-semibold">Your derived temporary Noble private key:</p>
-          <code className="block p-2 bg-red-100 rounded-md text-sm">{privateKey}</code>
+          <p className="font-semibold">
+            Your derived temporary Noble private key:
+          </p>
+          <code className="block p-2 bg-red-100 rounded-md text-sm">
+            {privateKey}
+          </code>
           <p className="text-sm text-red-600">
-            Warning: Anyone with this key can control your Noble funds. Store it securely and do not share it.
+            Warning: Anyone with this key can control your Noble funds. Store it
+            securely and do not share it.
           </p>
         </div>
       )}
@@ -370,27 +411,34 @@ console.log("UserOperation hash", hash);
             rel="noopener noreferrer"
             className="block underline"
           >
-            <code className="p-2 bg-gray-100 rounded-md text-sm break-all">{nobleAddress}</code>
+            <code className="p-2 bg-gray-100 rounded-md text-sm break-all">
+              {nobleAddress}
+            </code>
           </a>
           {evmAddress && (
             <>
-              <p className="font-semibold pt-4">Your derived 0x smart account (Polygon):</p>
+              <p className="font-semibold pt-4">
+                Your derived 0x smart account (Polygon):
+              </p>
               <a
                 href={`https://polygonscan.com/address/${evmAddress}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="block underline"
               >
-                <code className="p-2 bg-gray-100 rounded-md text-sm break-all">{evmAddress}</code>
+                <code className="p-2 bg-gray-100 rounded-md text-sm break-all">
+                  {evmAddress}
+                </code>
               </a>
             </>
           )}
           <p className="text-sm text-gray-500">
-            Keep this address handy — we will bridge your Noble USDC to this here. Your private key never leaves
-            the browser and can always be recreated from the same signature from your wallet.
+            Keep this address handy — we will bridge your Noble USDC to this
+            here. Your private key never leaves the browser and can always be
+            recreated from the same signature from your wallet.
           </p>
-                    {/* Display Sei balances */}
-                    {seiNobleBalance !== undefined && (
+          {/* Display Sei balances */}
+          {seiNobleBalance !== undefined && (
             <p className="text-sm">
               Sei Noble USDC balance: <code>{seiNobleBalance} USDC.n</code>
             </p>
@@ -407,7 +455,6 @@ console.log("UserOperation hash", hash);
           )}
         </div>
       )}
-
 
       {/* Step 3: IBC transfer from Sei → Noble */}
       {nobleAddress && isConnected && (
@@ -461,7 +508,8 @@ console.log("UserOperation hash", hash);
         <div className="flex flex-col items-center space-y-4 mt-6 max-w-sm w-full">
           {polygonBalance !== undefined && (
             <p className="text-lg">
-              Current Polygon USDC balance (smart-account): <code>{polygonBalance} USDC</code>
+              Current Polygon USDC balance (smart-account):{" "}
+              <code>{polygonBalance} USDC</code>
             </p>
           )}
           <input
@@ -489,17 +537,18 @@ console.log("UserOperation hash", hash);
 
       {/* Confirmation modal */}
       {showConfirmation && (
-        <div
-          className="flex items-center justify-center p-4 z-50 border-6"
-        >
+        <div className="flex items-center justify-center p-4 z-50 border-6">
           <div className="bg-white dark:bg-gray-900 rounded-lg p-6 space-y-4 max-w-md w-full text-center">
-            <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Transfer Submitted</h2>
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+              Transfer Submitted
+            </h2>
             <p>
-              Your USDC burn has been submitted on Noble. Once Circle finalizes attestation, the tokens will be minted on Polygon.
+              Your USDC burn has been submitted on Noble. Once Circle finalizes
+              attestation, the tokens will be minted on Polygon.
             </p>
             {cctpHash && (
               <p className="break-all">
-                Tx hash:{' '}
+                Tx hash:{" "}
                 <a
                   href={`https://www.mintscan.io/noble/tx/${cctpHash}`}
                   target="_blank"
@@ -512,7 +561,8 @@ console.log("UserOperation hash", hash);
             )}
             {polygonBalance !== undefined && (
               <p>
-                Current Polygon USDC balance (smart-account): <code>{polygonBalance} USDC</code>
+                Current Polygon USDC balance (smart-account):{" "}
+                <code>{polygonBalance} USDC</code>
               </p>
             )}
             <button
@@ -526,4 +576,4 @@ console.log("UserOperation hash", hash);
       )}
     </main>
   );
-} 
+}
