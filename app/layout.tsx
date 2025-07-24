@@ -6,8 +6,8 @@ import { Inter } from 'next/font/google';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata = {
-  title: 'Next.js Web3 Wallet',
-  description: 'A simple Next.js dApp with WalletConnect integration',
+  title: 'USDC Migration helper',
+  description: 'USDC Migration helper',
   // Add various icon types so browsers can automatically pick them up
   icons: {
     icon: '/favicon.ico', // Default favicon
