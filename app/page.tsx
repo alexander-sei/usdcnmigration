@@ -27,8 +27,9 @@ import {
   createBundlerClient,
   toSimple7702SmartAccount,
 } from "viem/account-abstraction";
+import { retrieveAttestation } from "../lib/attestation";
+import { mintOnSei } from "../lib/mintOnSei";
 
-// Removed ERC-20 paymaster helpers – replaced by direct Pimlico sponsorship
 
 export default function Home() {
   // Grab the connected EVM address so we can auto-fill the CCTP mint recipient
@@ -58,6 +59,11 @@ export default function Home() {
   // --- Step 5 (CCTP v2 Polygon → Sei) state ---
   const [seiAmount, setSeiAmount] = useState<string>("");
   const [seiTxHash, setSeiTxHash] = useState<string | undefined>();
+  // Fallback: user-provided Polygon burn tx hash for manual Sei mint
+  const [polygonTxHashInput, setPolygonTxHashInput] = useState<string>("");
+  // --- Automation stage tracking ---
+  type Stage = 'idle' | 'nobleBurning' | 'waitingPolygonMint' | 'polygonBurning' | 'complete';
+  const [autoStage, setAutoStage] = useState<Stage>('idle');
 
   const USDC: Address = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359" as Address; // Native USDC on Polygon
   const PAYMASTER: Address =
@@ -123,14 +129,15 @@ export default function Home() {
   };
 
   // CCTP burn on Noble → Ethereum (original flow)
-  const sendCCTP = async () => {
-    if (!privateKey || !evmAddress || !cctpAmount) return;
+  const sendCCTP = async (amountOverride?: string) => {
+    const amountToUse = amountOverride ?? cctpAmount;
+    if (!privateKey || !evmAddress || !amountToUse) return;
     try {
       // Dynamically load our local helper that handles the Noble CCTP message
       const { depositForBurn } = await import("../lib/depositForBurn");
 
       // Convert the user-provided amount (whole USDC units) to micro units (6 decimals)
-      const microAmount = ethers.parseUnits(cctpAmount, 6).toString();
+      const microAmount = ethers.parseUnits(amountToUse, 6).toString();
 
       const result = await depositForBurn({
         rpcEndpoint: "https://noble-rpc.polkachu.com/", // Noble public  RPC
@@ -148,8 +155,69 @@ export default function Home() {
     }
   };
 
+  async function recoverFromPolygon(manualPolygonTxHash: string) {
+      try {
+        // ------------------ Retrieve attestation from provided Polygon tx ------------------
+        const attestation = await retrieveAttestation({
+          sourceDomain: 7, // Polygon mainnet domain
+          transactionHash: manualPolygonTxHash.trim(),
+        });
+        console.log('Attestation retrieved (manual hash)', attestation);
+
+        // ------------------ Mint on Sei ------------------
+        let signer;
+        if ((window as any).ethereum) {
+          const provider = new ethers.BrowserProvider((window as any).ethereum);
+          const { chainId } = await provider.getNetwork();
+          if (chainId !== 1329n) {
+            try {
+              await (window as any).ethereum.request({
+                method: 'wallet_switchEthereumChain',
+                params: [{ chainId: '0x531' }], // 1329 in hex
+              });
+            } catch (switchErr: any) {
+              // If the chain hasn't been added to MetaMask
+              if (switchErr.code === 4902) {
+                await (window as any).ethereum.request({
+                  method: 'wallet_addEthereumChain',
+                  params: [
+                    {
+                      chainId: '0x531',
+                      chainName: 'Sei Mainnet',
+                      rpcUrls: ['https://evm-rpc.sei-apis.com'],
+                      nativeCurrency: { name: 'SEI', symbol: 'SEI', decimals: 18 },
+                      blockExplorerUrls: ['https://seitrace.com/?chain=pacific-1'],
+                    },
+                  ],
+                });
+              } else throw switchErr;
+            }
+          }
+          signer = await provider.getSigner();
+        } else {
+          alert('MetaMask (or compatible) wallet not detected');
+          return;
+        }
+
+        const { txHash: seiMintTx } = await mintOnSei({
+          signer,
+          message: attestation.message,
+          attestation: attestation.attestation,
+        });
+        console.log('Sei mint tx', seiMintTx);
+        setSeiTxHash(seiMintTx);
+        setAutoStage('complete');
+      } catch (err) {
+        console.error('Failed to mint on Sei from manual Polygon tx hash', err);
+        alert('Minting on Sei failed — see console for details.');
+      }
+    
+  }
+
+
   // NEW Paymaster-approval version of CCTP-v2 flow (Polygon → Sei)
-  async function sendCCTPV2() {
+  async function sendCCTPV2(amountOverride?: string) {
+    // -------- Manual fallback flow --------
     if (!privateKey) return;
 
     const client = createPublicClient({ chain: polygon, transport: http() });
@@ -162,11 +230,12 @@ export default function Home() {
     });
 
     // --- CCTP v2 burn parameters ---
-    if (!seiAmount || !address) {
+    const effectiveAmount = amountOverride ?? seiAmount;
+    if (!effectiveAmount || !address) {
       alert("Specify amount and ensure Sei wallet connected");
       return;
     }
-    const burnAmount = ethers.parseUnits(seiAmount, 6);
+    const burnAmount = ethers.parseUnits(effectiveAmount, 6);
     const SEI_DOMAIN_ID = 16;
     const mintRecipient = ethers.zeroPadValue(
       address as unknown as Address,
@@ -263,6 +332,72 @@ export default function Home() {
       authorization: authorization,
     });
     console.log("UserOperation hash", hash);
+
+    // ------------------ Step 3: Retrieve attestation ------------------
+    try {
+      // Wait until the user operation is executed on Polygon and we have a tx hash
+      const opReceipt = await (bundlerClient as any).waitForUserOperationReceipt?.({ hash });
+      const polygonTxHash = opReceipt?.receipt?.transactionHash ?? opReceipt?.transactionHash;
+      if (!polygonTxHash) {
+        console.warn('Could not resolve Polygon tx hash from user operation – please check manually');
+        return;
+      }
+      console.log('Polygon burn tx hash', polygonTxHash);
+
+      // Circle uses 7 for Polygon mainnet as the source domain
+      const attestation = await retrieveAttestation({
+        sourceDomain: 7,
+        transactionHash: polygonTxHash,
+      });
+      console.log('Attestation retrieved', attestation);
+
+      // ------------------ Step 4: Mint on Sei ------------------
+      // Ensure MetaMask is connected to Sei (chainId 1329). Prompt switch if needed.
+      let signer;
+      if ((window as any).ethereum) {
+        const provider = new ethers.BrowserProvider((window as any).ethereum);
+        const { chainId } = await provider.getNetwork();
+        if (chainId !== 1329n) {
+          try {
+            await (window as any).ethereum.request({
+              method: 'wallet_switchEthereumChain',
+              params: [{ chainId: '0x531' }], // 1329 in hex
+            });
+          } catch (switchErr: any) {
+            // If the chain hasn't been added to MetaMask
+            if (switchErr.code === 4902) {
+              await (window as any).ethereum.request({
+                method: 'wallet_addEthereumChain',
+                params: [
+                  {
+                    chainId: '0x531',
+                    chainName: 'Sei Mainnet',
+                    rpcUrls: ['https://evm-rpc.sei-apis.com'],
+                    nativeCurrency: { name: 'SEI', symbol: 'SEI', decimals: 18 },
+                    blockExplorerUrls: ['https://seitrace.com/?chain=pacific-1'],
+                  },
+                ],
+              });
+            } else throw switchErr;
+          }
+        }
+        signer = await provider.getSigner();
+      } else {
+        alert('MetaMask (or compatible) wallet not detected');
+        return;
+      }
+
+      const { txHash: seiMintTx } = await mintOnSei({
+        signer,
+        message: attestation.message,
+        attestation: attestation.attestation,
+      });
+      console.log('Sei mint tx', seiMintTx);
+      setSeiTxHash(seiMintTx);
+      setAutoStage('complete');
+    } catch (err) {
+      console.error('Failed to retrieve attestation / mint on Sei', err);
+    }
   }
 
   useEffect(() => {
@@ -361,6 +496,46 @@ export default function Home() {
     const intervalId = setInterval(fetchBalances, 2000);
     return () => clearInterval(intervalId);
   }, [address]);
+
+  /* -------------------- Automation watchers ------------------- */
+
+  // 1) Detect Noble USDC and auto-burn to Polygon
+  useEffect(() => {
+    if (
+      nobleBalance !== undefined &&
+      parseFloat(nobleBalance) > 0 &&
+      autoStage === 'idle'
+    ) {
+      (async () => {
+        try {
+          console.log('Auto-detected Noble balance, initiating CCTP burn');
+          await sendCCTP(nobleBalance);
+          setAutoStage('waitingPolygonMint');
+        } catch (err) {
+          console.error('Automated CCTP burn failed:', err);
+        }
+      })();
+    }
+  }, [nobleBalance, autoStage]);
+
+  // 2) Detect Polygon USDC mint and auto-burn to Sei
+  useEffect(() => {
+    if (
+      polygonBalance !== undefined &&
+      parseFloat(polygonBalance) > 0 &&
+      autoStage === 'waitingPolygonMint'
+    ) {
+      (async () => {
+        try {
+          console.log('Polygon USDC detected, initiating CCTP v2 burn to Sei');
+          await sendCCTPV2(polygonBalance);
+          setAutoStage('polygonBurning');
+        } catch (err) {
+          console.error('Automated Polygon → Sei burn failed:', err);
+        }
+      })();
+    }
+  }, [polygonBalance, autoStage]);
 
   return (
     <main className="flex flex-col items-center justify-start min-h-screen space-y-6 p-4 text-center pt-8">
@@ -494,7 +669,9 @@ export default function Home() {
             min="0"
           />
           <button
-            onClick={sendCCTP}
+            onClick={() => {
+              void sendCCTP();
+            }}
             disabled={!cctpAmount}
             className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-lg disabled:opacity-60"
           >
@@ -512,6 +689,7 @@ export default function Home() {
               <code>{polygonBalance} USDC</code>
             </p>
           )}
+          {/* Specify amount to burn on Polygon for CCTP V2 */}
           <input
             type="number"
             placeholder="Amount of USDC to send to Sei"
@@ -521,11 +699,29 @@ export default function Home() {
             min="0"
           />
           <button
-            onClick={sendCCTPV2}
+            onClick={() => {
+              void sendCCTPV2();
+            }}
             disabled={!seiAmount}
             className="bg-yellow-600 hover:bg-yellow-700 text-white px-6 py-3 rounded-lg disabled:opacity-60"
           >
             Burn &amp; Mint to Sei (CCTP V2 with Paymaster)
+          </button>
+          <input
+            type="text"
+            placeholder="Polygon burn tx hash (fallback)"
+            value={polygonTxHashInput}
+            onChange={(e) => setPolygonTxHashInput(e.target.value)}
+            className="w-full border rounded-md p-2 text-center"
+          />
+          <button
+            onClick={() => {
+              void recoverFromPolygon(polygonTxHashInput);
+            }}
+            disabled={!polygonTxHashInput}
+            className="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg disabled:opacity-60"
+          >
+            Mint on Sei using Polygon Tx Hash
           </button>
           {seiTxHash && (
             <p className="text-sm break-all">

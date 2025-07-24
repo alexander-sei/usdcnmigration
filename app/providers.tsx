@@ -18,7 +18,7 @@ import {
   walletConnectWallet,
 } from '@rainbow-me/rainbowkit/wallets';
 import { WagmiProvider, http, createConfig } from 'wagmi';
-import { polygon, sei } from 'wagmi/chains';
+import { sei } from 'wagmi/chains';
 import {
   QueryClient,
   QueryClientProvider,
@@ -26,7 +26,7 @@ import {
 
 const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || 'YOUR_PROJECT_ID';
 
-const chains = [polygon, sei] as const;
+const chains = [sei] as const;
 
 const connectors = connectorsForWallets(
   [
@@ -53,7 +53,6 @@ const config = createConfig({
   chains,
   connectors,
   transports: {
-    [polygon.id]: http(),
     [sei.id]: http('https://sei-rpc.publicnode.com'),
   },
   ssr: true,
