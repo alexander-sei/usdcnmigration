@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { ethers, Signer } from 'ethers';
 import { SEI_MESSAGE_TRANSMITTER } from './constants';
+import { connectorsForWallets } from '@rainbow-me/rainbowkit';
 
 // Minimal ABI for MessageTransmitterV2.receiveMessage(bytes,bytes)
 const MESSAGE_TRANSMITTER_ABI = [
@@ -52,5 +53,6 @@ export async function mintOnSei({
   if (receipt.status !== 1) {
     throw new Error('Sei mint transaction failed');
   }
-  return { txHash: receipt.transactionHash };
+  console.log(receipt);
+  return { txHash: receipt.hash };
 } 

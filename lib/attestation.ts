@@ -17,6 +17,8 @@ interface RetrieveArgs {
   intervalMs?: number;
   /** Set to true to query the Circle sandbox (testnets). */
   isTestnet?: boolean;
+  /** Maximum number of polling attempts before giving up (default: 3). */
+  maxAttempts?: number;
 }
 
 /**
@@ -29,18 +31,27 @@ export async function retrieveAttestation({
   transactionHash,
   intervalMs = 5000,
   isTestnet = false,
+  maxAttempts = 100,
 }: RetrieveArgs): Promise<AttestationData> {
   const baseUrl = isTestnet
     ? 'https://iris-api-sandbox.circle.com'
     : 'https://iris-api.circle.com';
   const url = `${baseUrl}/v2/messages/${sourceDomain}?transactionHash=${transactionHash}`;
 
+  let attempt = 0;
+
   for (;;) {
+    if (attempt >= maxAttempts) {
+      throw new Error(
+        `retrieveAttestation: exceeded maximum attempts (${maxAttempts}) without obtaining a completed attestation`,
+      );
+    }
     try {
       const { data } = await axios.get(url);
+      attempt += 1;
       const messageObj = data?.messages?.[0];
       if (!messageObj) {
-        // No message yet
+        // No message yet – wait and retry (doesn't count against maxAttempts as we didn't receive a message)
         await new Promise((r) => setTimeout(r, intervalMs));
         continue;
       }
