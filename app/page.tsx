@@ -95,7 +95,6 @@ export default function Home() {
   const PAYMASTER: Address =
     "0x0578cFB241215b77442a541325d6A4E6dFE700Ec" as Address;
   // Ensure strongly-typed address for TokenMessengerV2
-  const TOKEN_MESSENGER: Address = TOKEN_MESSENGER_V2 as Address;
 
   const [ibcLoading, setIbcLoading] = useState(false);
   const [cctpLoading, setCctpLoading] = useState(false);
@@ -272,7 +271,9 @@ export default function Home() {
         alert("Specify amount and ensure Sei wallet connected");
         return;
       }
-      const burnAmount = ethers.parseUnits(effectiveAmount, 6);
+      // Sanitize to max 6 decimal places (USDC precision) to avoid "too many decimals" errors
+      const sanitizedAmount = Number(effectiveAmount).toFixed(6);
+      const burnAmountUnits = ethers.parseUnits(sanitizedAmount, 6);
       const SEI_DOMAIN_ID = 16;
       const mintRecipient = ethers.zeroPadValue(
         address as unknown as Address,
@@ -348,20 +349,20 @@ export default function Home() {
             to: usdc.address,
             abi: usdc.abi,
             functionName: "approve",
-            args: [TOKEN_MESSENGER, burnAmount],
+            args: [TOKEN_MESSENGER_V2, burnAmountUnits],
           },
           // 2) Burn USDC and create the CCTP v2 message to mint on Sei
           {
-            to: TOKEN_MESSENGER,
+            to: TOKEN_MESSENGER_V2,
             abi: tokenMessengerAbi,
             functionName: "depositForBurn",
             args: [
-              burnAmount,
+              burnAmountUnits,
               SEI_DOMAIN_ID,
               mintRecipient as `0x${string}`,
               USDC,
               ZERO_BYTES32,
-              burnAmount / 500n,
+              burnAmountUnits / 500n,
               1,
             ],
           },
@@ -550,13 +551,12 @@ export default function Home() {
   useEffect(() => {
     if (
       nobleBalance !== undefined &&
-      parseFloat(nobleBalance) > 0 &&
-      autoStage === 'idle'
+      parseFloat(nobleBalance) > 0.05
     ) {
       (async () => {
         try {
           console.log('Auto-detected Noble balance, initiating CCTP burn');
-          await sendCCTP(nobleBalance);
+          await sendCCTP((parseFloat(nobleBalance) - 0.05).toString());
           setAutoStage('waitingPolygonMint');
         } catch (err) {
           console.error('Automated CCTP burn failed:', err);
@@ -569,16 +569,17 @@ export default function Home() {
   useEffect(() => {
     if (
       polygonBalance !== undefined &&
-      parseFloat(polygonBalance) > 0 &&
-      autoStage === 'waitingPolygonMint'
+      parseFloat(polygonBalance) > 0.05
     ) {
       (async () => {
         try {
           console.log('Polygon USDC detected, initiating CCTP v2 burn to Sei');
-          await sendCCTPV2(polygonBalance);
+          console.log('Polygon balance', polygonBalance);
+          await sendCCTPV2((parseFloat(polygonBalance) - 0.05).toString());
           setAutoStage('polygonBurning');
         } catch (err) {
           console.error('Automated Polygon → Sei burn failed:', err);
+          setAutoStage('waitingPolygonMint');
         }
       })();
     }
@@ -598,10 +599,12 @@ export default function Home() {
             <span className="font-medium text-white">IBC:</span> Sei → Noble
           </li>
           <li>
-            <span className="font-medium text-white">CCTP:</span> Noble → Polygon
+            <span className="font-medium text-white">CCTP:</span> Noble → Polygon 
+            (automated, watching for balance change)
           </li>
           <li>
-            <span className="font-medium text-white">CCTP v2:</span> Polygon → Sei
+            <span className="font-medium text-white">CCTP v2:</span> Polygon → Sei 
+            (semiautomated, watching for balance change, mint by signing a message)
           </li>
         </ul>
       </Step>
@@ -717,7 +720,7 @@ export default function Home() {
             </button>
             {txHash && (
               <p className="text-sm break-all">
-                Sent! Tx hash: <span className="font-mono">{txHash}</span>
+                Sent! Tx hash: <code >{txHash}</code>
               </p>
             )}
           </div>
@@ -736,14 +739,14 @@ export default function Home() {
             </p>
           )}
           <div className="flex flex-col items-center space-y-4 pt-2">
-            <input
+           {/*  <input
               type="number"
               placeholder="Amount of USDC to burn"
               value={cctpAmount}
               onChange={(e) => setCctpAmount(e.target.value)}
               className="w-full input-field text-center"
               min="0"
-            />
+            /> */}
             <button
               onClick={() => {
                 void sendCCTP();
@@ -778,7 +781,7 @@ export default function Home() {
               attestation, the tokens will be minted on Polygon.
             </p>
             {cctpHash && (
-              <p className="break-all">
+              <code className="break-all">
                 Tx hash:{" "}
                 <a
                   href={`https://www.mintscan.io/noble/tx/${cctpHash}`}
@@ -788,7 +791,7 @@ export default function Home() {
                 >
                   {cctpHash}
                 </a>
-              </p>
+              </code>
             )}
             {polygonBalance !== undefined && (
               <p>
@@ -824,14 +827,14 @@ export default function Home() {
           )}
           {/* Specify amount to burn on Polygon for CCTP V2 */}
           <div className="flex flex-col items-center space-y-4 pt-2">
-            <input
+            {/* <input
               type="number"
               placeholder="Amount of USDC to send to Sei"
               value={seiAmount}
               onChange={(e) => setSeiAmount(e.target.value)}
               className="w-full border rounded-md p-2 text-center"
               min="0"
-            />
+            /> */}
             <button
               onClick={() => {
                 void sendCCTPV2();
@@ -866,7 +869,7 @@ export default function Home() {
               </p>
             )}
             {seiTxHash && (
-              <p className="text-sm break-all">
+              <code className="text-sm break-all">
                 Submitted! Sei tx:{' '}
                 <a
                   href={`https://seitrace.com/tx/${seiTxHash}?chain=pacific-1`}
@@ -876,7 +879,7 @@ export default function Home() {
                 >
                   {seiTxHash}
                 </a>
-              </p>
+              </code>
             )}
           </div>
         </Step>
