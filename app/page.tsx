@@ -169,8 +169,10 @@ export default function Home() {
       // Dynamically load our local helper that handles the Noble CCTP message
       const { depositForBurn } = await import("../lib/depositForBurn");
 
+      // Sanitize to max 6 decimal places (USDC precision) to avoid "too many decimals" errors
+      const sanitizedAmount = Number(amountToUse).toFixed(6);
       // Convert the user-provided amount (whole USDC units) to micro units (6 decimals)
-      const microAmount = ethers.parseUnits(amountToUse, 6).toString();
+      const microAmount = ethers.parseUnits(sanitizedAmount, 6).toString();
 
       const result = await depositForBurn({
         rpcEndpoint: "https://noble-rpc.polkachu.com/", // Noble public  RPC
